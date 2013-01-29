@@ -1,0 +1,17 @@
+#!/bin/bash
+
+VIM_CONFIG_ROOT=$HOME/.vim
+
+TARGET_DIR=${1:-$PWD}
+
+INSTALL_DIRS=`find $TARGET_DIR -type d -depth 1 ! -iname ".*"`
+
+for dir in $INSTALL_DIRS; do
+  target="$VIM_CONFIG_ROOT/`basename $dir`"
+  test -d $target || mkdir -p $target
+  echo -n "Copying files to $target..."
+  cp -r "$dir"/* "$target"
+  echo
+done
+echo "Installed."
+

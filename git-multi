@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# usage: $0 command [--] [source_dir] [source_dir] ...
+# 
+# use --, or quote the command to separate it from source directories
+# if ambiguity exists.
+#
+# source_dir args are directories containing git repositories
+
+red="\033[00;31m"
+green="\033[00;32m"
+yellow="\033[00;33m"
+blue="\033[00;34m"
+purple="\033[00;35m"
+cyan="\033[00;36m"
+
+reset="\033[00m"
+
+ if [ $# -lt 1 ]
+then
+  echo "usage: `basename $0` command [--] [source_dir] [source_dir] ..."
+  exit 1
+fi
+
+command="$1"
+unknowns=""
+directories=""
+dashed=""
+
+shift
+
+while [ $# -gt 0 ] ; do
+  case "$1" in
+    --)
+      shift
+      command="$command$unknowns"
+      directories=$@
+      dashed="yes"
+      break
+      ;;
+    *)
+      unknowns="$unknowns $1"
+      shift 
+  esac
+done
+
+if [ -z "$dashed" ] ; then
+  directories="$unknowns"
+fi
+
+if [ -z "$directories" ] ; then
+  directories="."
+fi
+
+echo "command: '$command'"
+echo "directories: '$directories'"
+
+for i in $directories ; do
+  for gitdir in `find $i -name .git` ; do
+    ( working=$(dirname $gitdir)
+      cd $working
+      pwd
+      git "$command"
+      echo
+    )
+  done
+done
+

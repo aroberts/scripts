@@ -1,0 +1,59 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'date'
+
+
+def date_of_last(day)
+  date  = Date.parse(day)
+  delta = date >= Date.today ? 7 : 0
+  (date - delta)
+end
+
+
+glog_default = ["log", "--graph", "--pretty=format:'%Cred%h%Creset",
+  "-%C(yellow)%d%Creset", "%s", "%Cgreen(%cr)", "%C(bold blue)<%an>%Creset'",
+  "--abbrev-commit", "--date=relative"]
+weeks_back = 0
+committer = `whoami`.strip
+
+
+has_glog = system "git glog -n 1 &>/dev/null"
+
+if has_glog
+  command = "glog"
+else
+  command = glog_default.join(' ')
+end
+
+parser = OptionParser.new do |p|
+  p.banner = "Usage: git report [<options>]"
+
+  p.on("-w", "--weeks <n>",
+       "Number of weeks before " +
+       "the current week to report on [#{weeks_back}]") do |weeks|
+    weeks_back = weeks.to_i
+  end
+
+  p.on("-a", "--author [<name>]",
+       "Filter by committer (blank for any author) [#{committer}]") do |author|
+    committer = author
+  end 
+
+  p.on("-c", "--changes", "Show full commit diffs") do
+    command = "whatchanged -p"
+  end
+
+  p.on("-h", "--help") { puts p; exit 0 }
+
+end
+
+args = ARGV
+parser.order!(args)
+
+start = date_of_last("Friday") - (7 * weeks_back)
+stop = start + 7
+
+cmd = "git #{command} --author=#{committer} --since=#{start.to_s} --until=#{stop.to_s} --all #{args}"
+# puts cmd
+system cmd

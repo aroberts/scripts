@@ -1,0 +1,15 @@
+#!/bin/bash
+
+root=${1:-$PWD}
+
+for dir in a2escripts atomation cotton genepidgin hmp_16S icecube juniper manhattan martini restock sapphire shaker testing toothpick vcf2dbsnp webforms webmodels whiskey; do
+  target="$root/$dir"
+  if [ -d "$target/.git" ]; then
+    cd "$target"
+    git remote set-url ssh://stash:7999/a2e/$dir.git
+    echo "Updated $target."
+  fi
+  echo "Done."
+done
+
+

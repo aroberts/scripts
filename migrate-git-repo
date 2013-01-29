@@ -1,0 +1,12 @@
+#!/bin/bash
+
+for name in $@; do
+  cd ~/Migration
+  git clone gitolite@git:$name
+  cd $name
+  git checkout-all
+  git remote set-url origin ssh://git@stash:7999/a2e/$name.git
+  git sync
+  echo $name
+  echo
+done
