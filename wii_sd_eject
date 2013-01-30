@@ -1,0 +1,15 @@
+#!/bin/bash
+
+CARD_NAME="WII_SD"
+WII_CARD="/Volumes/$CARD_NAME"
+
+if [ ! -d "$WII_CARD" ]; then
+  echo "$CARD_NAME not mounted."
+  exit 1
+fi
+
+COUNT=${`find $WII_CARD -iname ._\* | wc -l`//[[:space:]]/}
+echo -n "Removing $COUNT resource forks..."
+# find $WII_CARD -iname ._\* -print0 | xargs -0 rm
+echo "Done."
+
