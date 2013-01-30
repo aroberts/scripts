@@ -23,7 +23,7 @@ cd `dirname $0`
 
 install_dir=${1:-"$HOME/bin"}
 
-[ -d "$install_dir" ] && mkdir -p "$install_dir"
+[ -d "$install_dir" ] || mkdir -p "$install_dir"
 
 for name in *; do
   target="$install_dir/$name"
