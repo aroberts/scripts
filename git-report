@@ -10,6 +10,8 @@ def date_of_last(day)
   (date - delta)
 end
 
+start_day = 'Friday'
+# start_day = 'Monday'
 
 glog_default = ["log", "--graph", "--pretty=format:'%Cred%h%Creset",
   "-%C(yellow)%d%Creset", "%s", "%Cgreen(%cr)", "%C(bold blue)<%an>%Creset'",
@@ -51,7 +53,7 @@ end
 args = ARGV
 parser.order!(args)
 
-start = date_of_last("Friday") - (7 * weeks_back)
+start = date_of_last(start_day) - (7 * weeks_back)
 stop = start + 7
 
 cmd = "git #{command} --author=#{committer} --since=#{start.to_s} --until=#{stop.to_s} --all #{args}"
