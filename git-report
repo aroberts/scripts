@@ -15,7 +15,7 @@ start_day = 'Friday'
 
 glog_default = ["log", "--graph", "--pretty=format:'%Cred%h%Creset",
   "-%C(yellow)%d%Creset", "%s", "%Cgreen(%cr)", "%C(bold blue)<%an>%Creset'",
-  "--abbrev-commit", "--date=relative"]
+  "--abbrev-commit", "--date=relative --all"]
 weeks_back = 0
 committer = `whoami`.strip
 
@@ -23,7 +23,7 @@ committer = `whoami`.strip
 has_glog = system "git glog -n 1 &>/dev/null"
 
 if has_glog
-  command = "glog"
+  command = "glog --all"
 else
   command = glog_default.join(' ')
 end
@@ -53,7 +53,8 @@ end
 args = ARGV
 parser.order!(args)
 
-start = date_of_last(start_day) - (7 * weeks_back)
+start = date_of_last(start_day) - (7 * weeks_back) + 1
+
 stop = start + 7
 
 cmd = "git #{command} --author=#{committer} --since=#{start.to_s} --until=#{stop.to_s} --all #{args}"
