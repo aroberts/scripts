@@ -40,7 +40,7 @@ parser = OptionParser.new do |p|
   p.on("-a", "--author [<name>]",
        "Filter by committer (blank for any author) [#{committer}]") do |author|
     committer = author
-  end 
+  end
 
   p.on("-c", "--changes", "Show full commit diffs") do
     command = "whatchanged -p"
