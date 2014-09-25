@@ -1,9 +1,0 @@
-#!/bin/bash
-
-while :
-do
-  clear
-  ack "TODO" $1
-  sleep 30
-done
-
