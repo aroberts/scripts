@@ -1,0 +1,24 @@
+#!/bin/bash
+
+port=22
+
+while getopts "p:" opt; do
+  case "$opt" in
+    \?)
+      echo "bad opt"
+      exit 1
+      ;;
+    p)  port=$OPTARG
+      ;;
+  esac
+done
+
+shift $((OPTIND-1))
+
+[ "$1" = "--" ] && shift
+
+host=$1
+dir=${2:-`echo $PWD | sed "s#^$HOME/##g"`}
+
+git diff --no-prefix | ssh -p$port $host "cd \"$dir\" && patch -p0"
+
