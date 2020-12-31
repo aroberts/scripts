@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# from https://www.jefframnani.com/use-ansible-vault-with-macos-keychain/
+
+# Keychain query fields.
+# LABEL is the value you put for "Keychain Item Name" in Keychain.app.
+[ "$#" -gt 0 ] || die "1 argument required, $# provided"
+usage() {
+  echo "$0 <domain> [user]"
+}
+
+LABEL="Ansible vault password: $1"
+ACCOUNT_NAME="${2:-$USER}"
+
+/usr/bin/security find-generic-password -w -a "$ACCOUNT_NAME" -l "$LABEL"
+
