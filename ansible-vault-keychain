@@ -1,16 +1,106 @@
 #!/bin/bash
 
-# from https://www.jefframnani.com/use-ansible-vault-with-macos-keychain/
+# inspired by https://www.jefframnani.com/use-ansible-vault-with-macos-keychain/
 
 # Keychain query fields.
-# LABEL is the value you put for "Keychain Item Name" in Keychain.app.
-[ "$#" -gt 0 ] || die "1 argument required, $# provided"
+PROJECT="`basename $PWD`"
+ACCOUNT_NAME="$USER"
+
+# 0: create
+# 1: set
+# 2: delete
+MODE=0
+DEBUG=
+EXTRA_SET_ARGS=""
+
 usage() {
-  echo "$0 <domain> [user]"
+  echo "$0 [options]"
+  echo "Options:"
+  echo "  -s            Set password, rather than retrieving it"
+  echo "  -O            Override any existing password, if it exists"
+  echo "  -X            Delete password"
+  echo "  -u <user>     Specify user [default: current user]"
+  echo "  -p <project>  Specify project [default: current directory name]"
+  echo "  -d            Debug mode, display commands (SHOWS PASSWORD ON SCREEN)"
+  echo "  -h            Show this help"
+  echo
 }
 
-LABEL="Ansible vault password: $1"
-ACCOUNT_NAME="${2:-$USER}"
+debug_log() {
+  if [ -n "$DEBUG" ]; then echo "$1"; fi
+}
 
-/usr/bin/security find-generic-password -w -a "$ACCOUNT_NAME" -l "$LABEL"
+while getopts ":su:p:hdXO" opt; do
+  case $opt in
+    h)
+      usage && exit
+      ;;
+    s)
+      MODE=1
+      ;;
+    X)
+      MODE=2;
+      ;;
+    O)
+      EXTRA_SET_ARGS="-U"
+      ;;
+    d)
+      DEBUG=1
+      ;;
+    u)
+      ACCOUNT_NAME="$OPTARG"
+      ;;
+    p)
+      PROJECT="$OPTARG"
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      exit 1
+      ;;
+  esac
+done
 
+
+
+# LABEL is the value assigned to "Keychain Item Name" in Keychain.app.
+LABEL="Ansible vault password: $PROJECT"
+
+if [ $MODE -eq 1 ]; then
+  ### CREATE PASSWORD
+  echo "Setting ansible password for project '$PROJECT' (user $ACCOUNT_NAME):"
+
+  #### input
+  echo -n "Password: "
+  read -s PASSWORD
+  echo
+  echo -n "Confirm password: "
+  read -s CONFIRM
+  echo
+
+  #### validate
+  if [ "$PASSWORD" != "$CONFIRM" ]; then
+    echo "ERROR: Passwords do not match." >&2
+    exit 1
+  elif [ "x" == "x$PASSWORD" ]; then
+    echo "ERROR: Password is blank." >&2
+    exit 1
+  else
+    #### execute
+    debug_log "/usr/bin/security add-generic-password -a \"$ACCOUNT_NAME\" -s \"$LABEL\" -w \"$PASSWORD\" $EXTRA_SET_ARGS"
+    /usr/bin/security add-generic-password -a "$ACCOUNT_NAME" -s "$LABEL" -w "$PASSWORD" $EXTRA_SET_ARGS
+  fi
+
+elif [ $MODE -eq 2 ]; then
+  ### DELETE PASSWORD
+  debug_log "/usr/bin/security delete-generic-password -a \"$ACCOUNT_NAME\" -l \"$LABEL\""
+  /usr/bin/security delete-generic-password -a "$ACCOUNT_NAME" -l "$LABEL" >/dev/null
+
+else
+  ### GET PASSWORD
+  debug_log "/usr/bin/security find-generic-password -a \"$ACCOUNT_NAME\" -l \"$LABEL\" -w"
+  /usr/bin/security find-generic-password -a "$ACCOUNT_NAME" -l "$LABEL" -w
+fi
