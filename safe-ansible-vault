@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# safe ansible vault- ignore no-op encrypt/decrypt actions
+#
+AV=`which ansible-vault`
+ACTION=$1
+F=$2
+
+# 1 -> not found, 0 -> found
+head -1 "$F" | ag "ANSIBLE_VAULT" > /dev/null
+IS_PLAIN=$?
+
+if [ "$ACTION $IS_PLAIN" == "encrypt 0" ] || [ "$ACTION $IS_PLAIN" == "decrypt 1" ]; then
+  # echo "SAV - nop"
+  exit 0
+fi
+
+# echo "SAV - doing"
+$AV $@
