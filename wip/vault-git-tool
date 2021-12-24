@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# performs git-related actions (clean, smudge, diff) using ansible-vault, but
+# via stdio rather than in-place
+
+
+usage() {
+  echo "$0 clean|smudge|diff"
+  echo
+}
+
+
+
+error=0
+
+op="$1"
+shift
+
+case $op in
+  clean)
+    input=`mktemp`
+    cat > $input
+    echo "cat done"
+
+    ansible-vault encrypt "$input" > /dev/null 2>&1
+    if [ "$?" == 0 ]; then
+      cat "$input"
+    else
+      error=1
+    fi
+
+    rm "$input"
+    exit $error
+
+    ;;
+  smudge)
+    input=`mktemp`
+    cat > $input
+
+    content=`PAGER=cat ansible-vault view "$input" 2> /dev/null`
+    if [ "$?" == 0 ]; then
+      echo "$content"
+    else
+      error=1
+    fi
+
+    rm "$input"
+    exit $error
+    ;;
+  diff)
+    content=`PAGER=cat ansible-vault view "$1" 2> /dev/null`
+    if [ "$?" == 0 ]; then
+      echo "$content"
+    else
+      cat "$1"
+    fi
+
+    exit 0
+    ;;
+  *)
+    usage && exit 1
+    ;;
+esac
+
