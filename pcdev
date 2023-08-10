@@ -1,0 +1,43 @@
+#!/bin/sh
+
+session_name=$1
+
+not_in_tmux() {
+  [ -z "$TMUX" ]
+}
+
+session_exists() {
+  tmux has-session -t "$session_name"
+}
+
+create_detached_session() {
+  (TMUX='' tmux new-session -Ad -s "$session_name")
+}
+
+initialize_session() {
+  tmux send-keys -t $session_name "wo services && cd $session_name" C-m \; \
+    new-window -t $session_name: \; \
+    send-keys -t $session_name "wo apps && cd $session_name" C-m \;
+}
+
+create_if_needed_and_attach() {
+  if not_in_tmux; then
+    tmux new-session -Ad -s "$session_name"
+    initialize_session
+    tmux attach-session -t "$session_name"
+  else
+    if ! session_exists; then
+      create_detached_session
+      initialize_session
+    fi
+    tmux switch-client -t "$session_name"
+  fi
+}
+
+
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <stack>"
+  exit 1
+fi
+
+create_if_needed_and_attach
