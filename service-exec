@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# exec interactive command in docker swarm service; makes a lot of assumptions
+# tying it to my particular deployment
+
+set -e
+
+CLUSTER="ssh://ansible@jupiter.lan"
+SERVICE_NAME=$1; shift
+
+
+TASK_ID=$(DOCKER_HOST=$CLUSTER docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
+NODE_ID=$(DOCKER_HOST=$CLUSTER docker inspect --format '{{ .NodeID }}' $TASK_ID)
+CONTAINER_ID=$(DOCKER_HOST=$CLUSTER docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
+NODE_HOST=$(DOCKER_HOST=$CLUSTER docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
+
+DOCKER_HOST="ssh://ansible@$NODE_HOST" docker exec -it $CONTAINER_ID "$@"
