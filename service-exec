@@ -1,17 +1,18 @@
 #!/bin/bash
 
+# user `docker context` to swap into the swarm cluster
+
 # exec interactive command in docker swarm service; makes a lot of assumptions
-# tying it to my particular deployment
+# tying it to my particular deployment.
 
 set -e
 
-CLUSTER="ssh://ansible@jupiter.lan"
 SERVICE_NAME=$1; shift
+NODE_USER="ansible"
 
+TASK_ID=$(docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
+NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
+CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
+NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
 
-TASK_ID=$(DOCKER_HOST=$CLUSTER docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
-NODE_ID=$(DOCKER_HOST=$CLUSTER docker inspect --format '{{ .NodeID }}' $TASK_ID)
-CONTAINER_ID=$(DOCKER_HOST=$CLUSTER docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
-NODE_HOST=$(DOCKER_HOST=$CLUSTER docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
-
-DOCKER_HOST="ssh://ansible@$NODE_HOST" docker exec -it $CONTAINER_ID "$@"
+DOCKER_HOST="ssh://$NODE_USER@$NODE_HOST" docker exec -it $CONTAINER_ID "$@"
