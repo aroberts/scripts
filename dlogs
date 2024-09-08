@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Run `docker logs` against the first matching container
+
+set -e
+
+if [ $# -lt "1" ]; then
+  echo "Error: need a container name to search for"
+  exit 1;
+fi
+
+args=${@: 1:$#-1}
+container=${@: -1}
+
+docker ps --format "{{.ID}} {{.Names}}" |\
+  ag "$container" |\
+  head -1 |\
+  cut -f1 -d\ |\
+  xargs docker logs $args

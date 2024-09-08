@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# user `docker context` to swap into the swarm cluster
+# use `docker context` to swap into the swarm cluster
 
 # exec interactive command in docker swarm service; makes a lot of assumptions
 # tying it to my particular deployment.
