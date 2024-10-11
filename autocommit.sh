@@ -24,7 +24,7 @@ git="/usr/local/bin/git"
 debug "Checking git status"
 
 if [[ -n $($git status --short) ]]; then
-  debug "Running git add" && $git add -A && debug "Running git commit" && git commit -m "Autocommit `date`"
+  debug "Running git add" && $git add -A && debug "Running git commit" && $git commit -m "Autocommit `date`" && debug "Running git push" && $git push
 else
   debug 'clean'
 fi
