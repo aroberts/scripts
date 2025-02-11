@@ -5,12 +5,42 @@
 # exec interactive command in docker swarm service; makes a lot of assumptions
 # tying it to my particular deployment.
 
+usage() {
+  echo "Usage: $0 [-v] SERVICE_NAME CMD"
+  echo "  -v    Additional logging"
+  exit 1
+}
+
+log() {
+  if [ -n "$DEBUG" ]; then
+    >&2 echo "$1"
+  fi
+}
+
+action="print"
+
+# Check for options
+while getopts ":v" opt; do
+  case $opt in
+    v)
+      DEBUG=1
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
+shift $(($OPTIND - 1));
+
+
 set -e
 
 SERVICE_NAME=$1; shift
 NODE_USER="ansible"
 
 TASK_ID=$(docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
+log "Got task id: $TASK_ID"
 NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
 CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
 NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
