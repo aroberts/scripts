@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# ansible-vault-keychain but using keymaster for touch-based authentication.
+
+# Keychain query fields.
+PROJECT="`basename $PWD`"
+ACCOUNT_NAME="$USER"
+
+KEYMASTER=/usr/local/bin/keymaster
+
+# 0: create
+# 1: set
+# 2: delete
+MODE=0
+DEBUG=
+
+usage() {
+  echo "$0 [options]"
+  echo "Options:"
+  echo "  -s            Set password, rather than retrieving it"
+  echo "  -X            Delete password"
+  echo "  -p <project>  Specify project [default: current directory name]"
+  echo "  -d            Debug mode, display commands (safe)"
+  echo "  -h            Show this help"
+  echo
+}
+
+debug_log() {
+  if [ -n "$DEBUG" ]; then echo "$1"; fi
+}
+
+while getopts ":sXp:dh" opt; do
+  case $opt in
+    h)
+      usage && exit
+      ;;
+    s)
+      MODE=1
+      ;;
+    X)
+      MODE=2;
+      ;;
+    d)
+      DEBUG=1
+      ;;
+    p)
+      PROJECT="$OPTARG"
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      exit 1
+      ;;
+  esac
+done
+
+
+
+# LABEL is the value assigned to "Keychain Item Name" in Keychain.app.
+LABEL="Ansible vault password: $PROJECT"
+
+if [ $MODE -eq 1 ]; then
+  ### CREATE PASSWORD
+  echo "Setting ansible password for project '$PROJECT' (user $ACCOUNT_NAME):"
+
+  #### input
+  echo -n "Password: "
+  read -s PASSWORD
+  echo
+  echo -n "Confirm password: "
+  read -s CONFIRM
+  echo
+
+  #### validate
+  if [ "$PASSWORD" != "$CONFIRM" ]; then
+    echo "ERROR: Passwords do not match." >&2
+    exit 1
+  elif [ "x" == "x$PASSWORD" ]; then
+    echo "ERROR: Password is blank." >&2
+    exit 1
+  else
+    #### execute
+    debug_log "\"$KEYMASTER\" set \"$LABEL\" \"PASSWORD\""
+    "$KEYMASTER" set "$LABEL" "$PASSWORD"
+  fi
+
+elif [ $MODE -eq 2 ]; then
+  ### DELETE PASSWORD
+  debug_log "\"$KEYMASTER\" delete \"$LABEL\""
+  "$KEYMASTER" delete "$LABEL"
+
+else
+  ### GET PASSWORD
+  debug_log "\"$KEYMASTER\" get \"$LABEL\""
+  "$KEYMASTER" get "$LABEL"
+fi
