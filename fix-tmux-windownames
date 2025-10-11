@@ -1,0 +1,5 @@
+#!/bin/bash
+[ -n "$TMUX" ] && \
+  tmux list-windows -F '#{window_index}' |\
+  while read index; do tmux setw -t $index automatic-rename; done
+
