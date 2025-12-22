@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -e
+
+SOURCE_DIR="$HOME/Source"
+
+if [[ -z "$1" ]]; then
+  echo "Usage: devlocal <git-repo-url> [project-name]" >&2
+  exit 1
+fi
+
+repo_url="$1"
+
+# Use provided project name or extract from URL (stripping .git suffix)
+if [[ -n "$2" ]]; then
+  project_name="$2"
+else
+  project_name=$(basename "$repo_url" .git)
+fi
+
+project_path="$SOURCE_DIR/$project_name"
+
+if [[ -d "$project_path" ]]; then
+  echo "project already exists!" >&2
+  exit 1
+fi
+
+cd "$SOURCE_DIR"
+git clone "$repo_url" "$project_name"
+cd "$project_name"
+which tat && tat || exit 0
