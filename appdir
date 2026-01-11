@@ -1,0 +1,97 @@
+#!/bin/bash
+# appdir - Resolve docker app service directory paths
+# Usage: appdir <service> [-f] [-v]
+#   -f: Force first match without prompting
+#   -v: Verbose output
+#
+# Outputs the resolved directory path to stdout.
+# Use with wrapper: appdir() { local d; d=$(command appdir "$@") && cd "$d"; }
+
+set -euo pipefail
+
+verbose=false
+force_first=false
+service_name=""
+
+# Parse arguments
+for arg in "$@"; do
+  case "$arg" in
+    -f|--force) force_first=true ;;
+    -v|--verbose) verbose=true ;;
+    -*)
+      echo "Error: Unknown option: $arg" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "$service_name" ]]; then
+        service_name="$arg"
+      fi
+      ;;
+  esac
+done
+
+log() {
+  if [[ "$verbose" == true ]]; then
+    echo "$*" >&2
+  fi
+}
+
+# Validate environment
+if [[ -z "${DOCKER_APP_ROOT:-}" ]]; then
+  echo "Error: DOCKER_APP_ROOT environment variable is not set" >&2
+  exit 1
+fi
+
+if [[ ! -d "$DOCKER_APP_ROOT" ]]; then
+  echo "Error: DOCKER_APP_ROOT directory does not exist: $DOCKER_APP_ROOT" >&2
+  exit 1
+fi
+
+if [[ -z "$service_name" ]]; then
+  echo "Usage: appdir <service> [-f] [-v]" >&2
+  exit 1
+fi
+
+# Find all matching service directories
+matches=()
+while IFS= read -r -d '' service_path; do
+  matches+=("$service_path")
+done < <(find "$DOCKER_APP_ROOT" -mindepth 2 -maxdepth 2 -type d -name "$service_name" -print0 2>/dev/null)
+
+if [[ ${#matches[@]} -eq 0 ]]; then
+  echo "Error: Service '$service_name' not found in $DOCKER_APP_ROOT" >&2
+  exit 1
+fi
+
+# Single match - output path
+if [[ ${#matches[@]} -eq 1 ]]; then
+  log "Found: ${matches[0]}"
+  echo "${matches[0]}"
+  exit 0
+fi
+
+# Multiple matches with force - output first
+if [[ "$force_first" == true ]]; then
+  log "Multiple matches, using first: ${matches[0]}"
+  echo "${matches[0]}"
+  exit 0
+fi
+
+# Interactive selection (prompts go to stderr, read from tty)
+echo "Multiple matches found for '$service_name':" >&2
+for i in "${!matches[@]}"; do
+  stack_name=$(basename "$(dirname "${matches[$i]}")")
+  echo "  $((i+1)). $stack_name/$service_name" >&2
+done
+
+echo -n "Select (1-${#matches[@]}): " >&2
+read -r selection </dev/tty
+
+if ! [[ "$selection" =~ ^[0-9]+$ ]] || [[ "$selection" -lt 1 ]] || [[ "$selection" -gt ${#matches[@]} ]]; then
+  echo "Error: Invalid selection" >&2
+  exit 1
+fi
+
+target_dir="${matches[$((selection-1))]}"
+log "Selected: $target_dir"
+echo "$target_dir"

@@ -1,0 +1,45 @@
+#compdef appdir
+
+# ZSH completion for appdir command
+# Install: Place this file in your $fpath (e.g., /usr/local/share/zsh/site-functions/)
+# or source it from your .zshrc
+
+_appdir() {
+  local -a services
+  local docker_root="$DOCKER_APP_ROOT"
+
+  # Check if DOCKER_APP_ROOT is set
+  if [[ -z "$docker_root" ]] || [[ ! -d "$docker_root" ]]; then
+    _message "DOCKER_APP_ROOT not set or invalid"
+    return 1
+  fi
+
+  # Find all service directories (depth 2: stack/service)
+  # Extract unique service names
+  while IFS= read -r service_dir; do
+    local service_name=$(basename "$service_dir")
+    services+=("$service_name")
+  done < <(find "$docker_root" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | sort -u)
+
+  # Remove duplicates
+  services=(${(u)services})
+
+  # Handle flags and service name completion
+  local state
+
+  _arguments -C \
+    '(-f --force)'{-f,--force}'[Force first match without prompting]' \
+    '1: :->service' \
+    '*: :->flags'
+
+  case $state in
+    service)
+      _describe 'service' services
+      ;;
+    flags)
+      _arguments '(-f --force)'{-f,--force}'[Force first match without prompting]'
+      ;;
+  esac
+}
+
+_appdir "$@"
