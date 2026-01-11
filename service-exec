@@ -6,8 +6,9 @@
 # tying it to my particular deployment.
 
 usage() {
-  echo "Usage: $0 [-v] SERVICE_NAME CMD"
+  echo "Usage: $0 [-v] SERVICE_NAME [EXEC_OPTS...] [--] CMD [CMD_ARGS...]"
   echo "  -v    Additional logging"
+  echo "  --    Separator between docker exec options and command"
   exit 1
 }
 
@@ -39,10 +40,24 @@ set -e
 SERVICE_NAME=$1; shift
 NODE_USER="ansible"
 
+# Check if -- is present in remaining args
+EXEC_OPTS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    # Collect exec opts until --
+    while [[ $# -gt 0 && "$1" != "--" ]]; do
+      EXEC_OPTS+=("$1")
+      shift
+    done
+    shift  # consume --
+    break
+  fi
+done
+
 TASK_ID=$(docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
 log "Got task id: $TASK_ID"
 NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
 CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
 NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
 
-DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec -it $CONTAINER_ID "$@"
+DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec -it "${EXEC_OPTS[@]}" $CONTAINER_ID "$@"
