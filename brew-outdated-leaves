@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+export _LEAVES=$(brew leaves)
+
+brew outdated -v "$@" | awk '
+BEGIN {
+  n = split(ENVIRON["_LEAVES"], arr, "\n")
+  for (i = 1; i <= n; i++) leaf[arr[i]] = 1
+}
+$1 in leaf
+'
