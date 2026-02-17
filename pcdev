@@ -1,43 +1,179 @@
-#!/bin/sh
+#!/bin/bash
 
-session_name=$1
+# Open a remote tmux session on the node running a Docker Swarm service,
+# in the directory of one of its bind mounts or volumes.
+#
+# Resolves a short service name (e.g. "traefik") to a full swarm service
+# (e.g. "web_traefik") via suffix matching. Finds the node running the
+# service's task, inspects its mounts on that node, and opens (or reattaches)
+# a tmux session in the selected mount directory.
+#
+# Uses the current docker context to talk to the swarm manager, then
+# DOCKER_HOST=ssh://ansible@<node>.lan for per-node container/volume inspection.
+#
+# Examples:
+#   pcdev traefik              # resolve service, pick config mount, open tmux
+#   pcdev traefik config       # explicitly select mount matching "config"
+#   pcdev transmission downloads  # select mount matching "downloads"
+#   pcdev -v traefik           # same, with debug logging
 
-not_in_tmux() {
-  [ -z "$TMUX" ]
+usage() {
+  echo "Usage: $0 [-v] <service-name> [mount-hint]"
+  echo "  -v           Additional logging"
+  echo "  mount-hint   Filter mounts to one matching this string"
+  exit 1
 }
 
-session_exists() {
-  tmux has-session -t "$session_name"
-}
-
-create_detached_session() {
-  (TMUX='' tmux new-session -Ad -s "$session_name")
-}
-
-initialize_session() {
-  tmux send-keys -t $session_name "wo services && cd $session_name" C-m \; \
-    new-window -t $session_name: \; \
-    send-keys -t $session_name "wo apps && cd $session_name" C-m \;
-}
-
-create_if_needed_and_attach() {
-  if not_in_tmux; then
-    tmux new-session -Ad -s "$session_name"
-    initialize_session
-    tmux attach-session -t "$session_name"
-  else
-    if ! session_exists; then
-      create_detached_session
-      initialize_session
-    fi
-    tmux switch-client -t "$session_name"
+log() {
+  if [ -n "$DEBUG" ]; then
+    >&2 echo "$1"
   fi
 }
 
+while getopts ":v" opt; do
+  case $opt in
+    v)
+      DEBUG=1
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
 
-if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 <stack>"
+shift $(($OPTIND - 1))
+
+set -e
+
+if [ $# -lt 1 ]; then
+  usage
+fi
+
+SERVICE_NAME="$1"
+MOUNT_HINT="${2:-}"
+NODE_USER="ansible"
+
+# Step 1: Fuzzy-match service name
+ALL_SERVICES=$(docker service ls --format '{{.Name}}')
+MATCHES=()
+while IFS= read -r svc; do
+  # exact match or suffix match after _
+  if [[ "$svc" == "$SERVICE_NAME" ]] || [[ "$svc" == *_"$SERVICE_NAME" ]]; then
+    MATCHES+=("$svc")
+  fi
+done <<< "$ALL_SERVICES"
+
+if [ ${#MATCHES[@]} -eq 0 ]; then
+  echo "Error: no service matching '$SERVICE_NAME'" >&2
+  exit 1
+elif [ ${#MATCHES[@]} -gt 1 ]; then
+  echo "Error: ambiguous service name '$SERVICE_NAME'. Did you mean:" >&2
+  for m in "${MATCHES[@]}"; do
+    echo "  $m" >&2
+  done
   exit 1
 fi
 
-create_if_needed_and_attach
+FULL_SERVICE="${MATCHES[0]}"
+log "Resolved service: $FULL_SERVICE"
+
+# Step 2: Resolve service → node + container
+TASK_ID=$(docker service ps --filter 'desired-state=running' "$FULL_SERVICE" -q | head -1)
+if [ -z "$TASK_ID" ]; then
+  echo "Error: service '$FULL_SERVICE' has no running tasks" >&2
+  exit 1
+fi
+log "Task ID: $TASK_ID"
+
+NODE_ID=$(docker inspect --format '{{ .NodeID }}' "$TASK_ID")
+CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' "$TASK_ID")
+NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' "$NODE_ID")
+log "Node: $NODE_HOST  Container: ${CONTAINER_ID:0:12}"
+
+# Step 3: Get mounts from remote container
+REMOTE_DOCKER="ssh://$NODE_USER@${NODE_HOST}.lan"
+RAW_MOUNTS=$(DOCKER_HOST="$REMOTE_DOCKER" docker inspect "$CONTAINER_ID" \
+  --format '{{range .Mounts}}{{.Type}} {{.Source}} {{.Destination}}{{"\n"}}{{end}}')
+
+# Resolve mount sources and filter noise
+NOISE_PATTERNS="^/etc/timezone$|^/etc/localtime$|^/var/run/docker.sock$|^/dev/|^/dev$|^/run/udev"
+MOUNT_PATHS=()
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  TYPE=$(echo "$line" | awk '{print $1}')
+  SOURCE=$(echo "$line" | awk '{print $2}')
+
+  if [ "$TYPE" = "volume" ]; then
+    # Source is the volume name for named volumes; resolve to mountpoint
+    SOURCE=$(DOCKER_HOST="$REMOTE_DOCKER" docker volume inspect "$SOURCE" --format '{{.Mountpoint}}')
+  fi
+
+  if echo "$SOURCE" | grep -qE "$NOISE_PATTERNS"; then
+    log "Skipping noise mount: $SOURCE"
+    continue
+  fi
+
+  MOUNT_PATHS+=("$SOURCE")
+  log "Mount: $TYPE $SOURCE"
+done <<< "$RAW_MOUNTS"
+
+if [ ${#MOUNT_PATHS[@]} -eq 0 ]; then
+  echo "Error: no mounts found for service '$FULL_SERVICE'" >&2
+  exit 1
+fi
+
+# Step 4: Select mount path
+TARGET=""
+if [ -n "$MOUNT_HINT" ]; then
+  HINT_MATCHES=()
+  for p in "${MOUNT_PATHS[@]}"; do
+    if echo "$p" | grep -qi "$MOUNT_HINT"; then
+      HINT_MATCHES+=("$p")
+    fi
+  done
+  if [ ${#HINT_MATCHES[@]} -eq 0 ]; then
+    echo "Error: no mount matching '$MOUNT_HINT'. Available mounts:" >&2
+    for p in "${MOUNT_PATHS[@]}"; do
+      echo "  $p" >&2
+    done
+    exit 1
+  elif [ ${#HINT_MATCHES[@]} -eq 1 ]; then
+    TARGET="${HINT_MATCHES[0]}"
+  else
+    echo "Error: ambiguous mount hint '$MOUNT_HINT'. Matches:" >&2
+    for p in "${HINT_MATCHES[@]}"; do
+      echo "  $p" >&2
+    done
+    exit 1
+  fi
+elif [ ${#MOUNT_PATHS[@]} -eq 1 ]; then
+  TARGET="${MOUNT_PATHS[0]}"
+else
+  # Prefer a mount matching "config"
+  for p in "${MOUNT_PATHS[@]}"; do
+    if echo "$p" | grep -qi "config"; then
+      TARGET="$p"
+      break
+    fi
+  done
+
+  if [ -z "$TARGET" ]; then
+    echo "Multiple mounts found. Select one:" >&2
+    select p in "${MOUNT_PATHS[@]}"; do
+      if [ -n "$p" ]; then
+        TARGET="$p"
+        break
+      fi
+    done
+  fi
+fi
+
+log "Target directory: $TARGET"
+
+# Step 5: Remote tmux session
+SESSION_NAME="$SERVICE_NAME"
+ssh "$NODE_USER@${NODE_HOST}.lan" -t "
+  tmux has-session -t '$SESSION_NAME' 2>/dev/null \
+    && tmux attach-session -t '$SESSION_NAME' \
+    || tmux new-session -s '$SESSION_NAME' -c '$TARGET'
+"
