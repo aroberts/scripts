@@ -1,0 +1,175 @@
+#!/bin/bash
+set -e
+
+red="\033[00;31m"
+green="\033[00;32m"
+yellow="\033[00;33m"
+reset="\033[00m"
+
+usage() {
+  cat <<EOF
+Usage: git archive-branch [options] <branch> [<branch>...]
+
+Archive git branches by creating annotated tags and deleting the branches.
+
+Options:
+  -m <message>        extra annotation text
+  -n, --dry-run       show what would happen without doing it
+  -f, --force         force-delete unmerged branches + overwrite existing tags
+  -r, --include-remote  also delete the branch from the remote
+  -R <remote>         specify remote (default: origin, implies -r)
+  --list              list archived branches (shortcut for git-list-archived)
+  -h, --help          show this help
+EOF
+}
+
+doit() {
+  echo "  $*"
+  if [ -z "$dryrun" ]; then
+    "$@"
+  fi
+}
+
+main() {
+  dryrun=""
+  force=""
+  message=""
+  include_remote=""
+  remote="origin"
+  branches=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n|--dry-run)
+        dryrun="true"
+        ;;
+      -f|--force)
+        force="true"
+        ;;
+      -r|--include-remote)
+        include_remote="true"
+        ;;
+      -R)
+        remote="$2"
+        include_remote="true"
+        shift
+        ;;
+      -m)
+        message="$2"
+        shift
+        ;;
+      --list)
+        exec git-list-archived "$@"
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        branches+=("$@")
+        break
+        ;;
+      -*)
+        echo -e "${red}error:${reset} unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+      *)
+        branches+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  if [ ${#branches[@]} -eq 0 ]; then
+    usage >&2
+    exit 1
+  fi
+
+  # Get current branch to prevent self-archival
+  current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+  # Safety checks — all before any mutations
+  for branch in "${branches[@]}"; do
+    if [ "$branch" = "$current_branch" ]; then
+      echo -e "${red}error:${reset} refusing to archive the currently checked-out branch: $branch" >&2
+      exit 1
+    fi
+
+    if ! git show-ref --verify --quiet "refs/heads/$branch"; then
+      echo -e "${red}error:${reset} local branch does not exist: $branch" >&2
+      exit 1
+    fi
+
+    if [ -z "$force" ] && git show-ref --verify --quiet "refs/tags/archive/$branch"; then
+      echo -e "${red}error:${reset} tag archive/$branch already exists (use --force to overwrite)" >&2
+      exit 1
+    fi
+  done
+
+  # Archive each branch
+  for branch in "${branches[@]}"; do
+    echo -e "${green}Archiving:${reset} $branch"
+
+    tag_name="archive/$branch"
+    tip=$(git rev-parse "refs/heads/$branch")
+    short_tip=$(git rev-parse --short "refs/heads/$branch")
+
+    # Metadata from branch tip
+    branch_author=$(git log -1 --format='%an <%ae>' "$tip")
+    branch_date=$(git log -1 --format='%aI' "$tip")
+    branch_subject=$(git log -1 --format='%s' "$tip")
+
+    # Archiver metadata
+    archiver_name=$(git config user.name)
+    archiver_email=$(git config user.email)
+    archive_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Build tag message
+    tag_message="Archived branch: $branch
+
+Archived-By: $archiver_name <$archiver_email>
+Archived-Date: $archive_date
+Original-Branch: $branch
+Branch-Tip: $short_tip
+Branch-Author: $branch_author
+Branch-Date: $branch_date
+Branch-Subject: $branch_subject"
+
+    if [ -n "$message" ]; then
+      tag_message="$tag_message
+
+$message"
+    fi
+
+    # Create tag (must succeed before branch deletion)
+    force_flag=""
+    if [ -n "$force" ]; then
+      force_flag="--force"
+    fi
+    doit git tag -a $force_flag -m "$tag_message" "$tag_name" "$tip"
+
+    # Delete local branch
+    delete_flag="-d"
+    if [ -n "$force" ]; then
+      delete_flag="-D"
+    fi
+    doit git branch $delete_flag "$branch"
+
+    # Delete remote branch (best-effort)
+    if [ -n "$include_remote" ]; then
+      if [ -n "$dryrun" ]; then
+        doit git push "$remote" --delete "$branch"
+      else
+        if ! git push "$remote" --delete "$branch" 2>/dev/null; then
+          echo -e "  ${yellow}warning:${reset} failed to delete $branch from $remote (continuing)"
+        fi
+      fi
+    fi
+
+    echo -e "  ${green}done:${reset} $branch -> $tag_name ($short_tip)"
+  done
+}
+
+main "$@"

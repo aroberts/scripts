@@ -1,0 +1,66 @@
+#!/bin/bash
+set -e
+
+usage() {
+  cat <<EOF
+Usage: git list-archived [options]
+
+List all archived branches (archive/* tags) with metadata.
+
+Options:
+  -v, --verbose       show full tag annotation
+  -h, --help          show this help
+EOF
+}
+
+verbose=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v|--verbose)
+      verbose="true"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+tags=$(git tag -l 'archive/*' | sort)
+
+if [ -z "$tags" ]; then
+  echo "No archived branches found."
+  exit 0
+fi
+
+for tag in $tags; do
+  branch="${tag#archive/}"
+
+  if [ -n "$verbose" ]; then
+    echo "$branch"
+    echo "  Tag: $tag"
+    git tag -n99 -l "$tag" | sed 's/^/  /'
+    echo
+  else
+    # Parse metadata from tag annotation
+    annotation=$(git tag -l --format='%(contents)' "$tag")
+    archived_date=$(echo "$annotation" | sed -n 's/^Archived-Date: //p')
+    archived_by=$(echo "$annotation" | sed -n 's/^Archived-By: //p')
+    branch_tip=$(echo "$annotation" | sed -n 's/^Branch-Tip: //p')
+    branch_subject=$(echo "$annotation" | sed -n 's/^Branch-Subject: //p')
+
+    echo "$branch"
+    echo "  Tag:       $tag"
+    echo "  Archived:  $archived_date"
+    echo "  By:        $archived_by"
+    echo "  Commit:    $branch_tip $branch_subject"
+    echo
+  fi
+done

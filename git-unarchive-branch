@@ -1,0 +1,106 @@
+#!/bin/bash
+set -e
+
+red="\033[00;31m"
+green="\033[00;32m"
+reset="\033[00m"
+
+usage() {
+  cat <<EOF
+Usage: git unarchive-branch [options] <branch> [<branch>...]
+
+Restore archived branches from their archive tags.
+Accepts both "foo" and "archive/foo" as branch names.
+
+Options:
+  -n, --dry-run       show what would happen without doing it
+  -k, --keep-tag      restore branch but don't delete the archive tag
+  -h, --help          show this help
+EOF
+}
+
+doit() {
+  echo "  $*"
+  if [ -z "$dryrun" ]; then
+    "$@"
+  fi
+}
+
+main() {
+  dryrun=""
+  keep_tag=""
+  branches=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n|--dry-run)
+        dryrun="true"
+        ;;
+      -k|--keep-tag)
+        keep_tag="true"
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        branches+=("$@")
+        break
+        ;;
+      -*)
+        echo -e "${red}error:${reset} unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+      *)
+        branches+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  if [ ${#branches[@]} -eq 0 ]; then
+    usage >&2
+    exit 1
+  fi
+
+  # Normalize and validate all branches before any mutations
+  local_names=()
+  tag_names=()
+  for arg in "${branches[@]}"; do
+    branch="${arg#archive/}"
+    tag_name="archive/$branch"
+
+    if ! git show-ref --verify --quiet "refs/tags/$tag_name"; then
+      echo -e "${red}error:${reset} archive tag not found: $tag_name" >&2
+      exit 1
+    fi
+
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      echo -e "${red}error:${reset} local branch already exists: $branch" >&2
+      exit 1
+    fi
+
+    local_names+=("$branch")
+    tag_names+=("$tag_name")
+  done
+
+  # Restore each branch
+  for i in "${!local_names[@]}"; do
+    branch="${local_names[$i]}"
+    tag_name="${tag_names[$i]}"
+
+    echo -e "${green}Restoring:${reset} $branch"
+
+    doit git branch "$branch" "$tag_name"
+
+    if [ -z "$keep_tag" ]; then
+      doit git tag -d "$tag_name"
+    fi
+
+    echo -e "  ${green}done:${reset} $tag_name -> $branch"
+  done
+}
+
+main "$@"
