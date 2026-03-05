@@ -1,0 +1,10 @@
+#compdef tat
+
+_tat() {
+  local -a sessions
+  sessions=(${(f)"$(tmux list-sessions -F '#{session_name}' 2>/dev/null)"})
+
+  _arguments '1:session:compadd -a sessions'
+}
+
+_tat "$@"
