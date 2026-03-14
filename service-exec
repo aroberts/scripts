@@ -60,4 +60,9 @@ NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
 CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
 NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
 
-DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec -it "${EXEC_OPTS[@]}" $CONTAINER_ID "$@"
+TTY_OPTS="-i"
+if [ -t 0 ]; then
+  TTY_OPTS="-it"
+fi
+
+DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec $TTY_OPTS "${EXEC_OPTS[@]}" $CONTAINER_ID "$@"
