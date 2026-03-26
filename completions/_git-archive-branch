@@ -1,0 +1,16 @@
+#compdef git-archive-branch
+
+_git-archive-branch() {
+  local curcontext="$curcontext" state
+  _arguments -s \
+    '-m[extra annotation text]:message:' \
+    '(-n --dry-run)'{-n,--dry-run}'[show what would happen without doing it]' \
+    '(-f --force)'{-f,--force}'[force-delete unmerged branches + overwrite existing tags]' \
+    '(-r --include-remote)'{-r,--include-remote}'[also delete the branch from the remote]' \
+    '-R[specify remote]:remote:__git_remotes' \
+    '--list[list archived branches]' \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '*:branch:__git_branch_names'
+}
+
+_git-archive-branch "$@"

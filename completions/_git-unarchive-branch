@@ -1,0 +1,14 @@
+#compdef git-unarchive-branch
+
+_git-unarchive-branch() {
+  local -a archived
+  archived=(${${(f)"$(git tag -l 'archive/*' 2>/dev/null)"}#archive/})
+
+  _arguments -s \
+    '(-n --dry-run)'{-n,--dry-run}'[show what would happen without doing it]' \
+    '(-k --keep-tag)'{-k,--keep-tag}'[restore branch but keep the archive tag]' \
+    '(-h --help)'{-h,--help}'[show help]' \
+    '*:archived branch:compadd -a archived'
+}
+
+_git-unarchive-branch "$@"

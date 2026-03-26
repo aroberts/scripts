@@ -1,0 +1,9 @@
+#compdef git-list-archived
+
+_git-list-archived() {
+  _arguments -s \
+    '(-v --verbose)'{-v,--verbose}'[show full tag annotation]' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_git-list-archived "$@"
