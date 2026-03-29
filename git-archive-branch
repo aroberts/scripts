@@ -15,7 +15,7 @@ Archive git branches by creating annotated tags and deleting the branches.
 Options:
   -m <message>        extra annotation text
   -n, --dry-run       show what would happen without doing it
-  -f, --force         force-delete unmerged branches + overwrite existing tags
+  -f, --force         overwrite existing archive tags
   -r, --include-remote  also delete the branch from the remote
   -R <remote>         specify remote (default: origin, implies -r)
   --list              list archived branches (shortcut for git-list-archived)
@@ -150,12 +150,8 @@ $message"
     fi
     doit git tag -a $force_flag -m "$tag_message" "$tag_name" "$tip"
 
-    # Delete local branch
-    delete_flag="-d"
-    if [ -n "$force" ]; then
-      delete_flag="-D"
-    fi
-    doit git branch $delete_flag "$branch"
+    # Delete local branch (always force — the tag preserves the commits)
+    doit git branch -D "$branch"
 
     # Delete remote branch (best-effort)
     if [ -n "$include_remote" ]; then

@@ -18,7 +18,7 @@ Creates an annotated tag at `archive/<branch>` and deletes the local branch.
 |------|-------------|
 | `-m <message>` | Extra annotation text appended to the tag message |
 | `-n, --dry-run` | Show what would happen without doing it |
-| `-f, --force` | Force-delete unmerged branches (`git branch -D`) and overwrite existing archive tags |
+| `-f, --force` | Overwrite existing archive tags |
 | `-r, --include-remote` | Also delete the branch from the remote |
 | `-R <remote>` | Specify remote (default: `origin`, implies `-r`) |
 | `--list` | Shortcut that execs `git-list-archived` |
@@ -30,6 +30,7 @@ Creates an annotated tag at `archive/<branch>` and deletes the local branch.
 - Refuses if the branch doesn't exist locally
 - Refuses if `archive/<branch>` tag already exists (unless `--force`)
 - Tag is always created before the branch is deleted — if tagging fails, the branch is preserved
+- Branch deletion is always forced (`-D`) since the tag already preserves the commits
 - Remote deletion is best-effort (warns on failure, local archive is already done)
 
 **Multi-branch behavior:** fail-fast. If any branch fails validation, no branches are processed. Branches already archived in the loop are preserved.
@@ -145,7 +146,7 @@ Restore but keep the archive tag:
 git unarchive-branch -k feature/foo
 ```
 
-Force-archive an unmerged branch, overwriting an existing tag:
+Overwrite an existing archive tag (e.g. re-archive after more commits):
 
 ```sh
 git archive-branch -f feature/experimental
