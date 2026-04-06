@@ -12,13 +12,16 @@ usage() {
   exit 1
 }
 
+die() {
+  >&2 echo "error: $1"
+  exit 1
+}
+
 log() {
   if [ -n "$DEBUG" ]; then
     >&2 echo "$1"
   fi
 }
-
-action="print"
 
 # Check for options
 while getopts ":v" opt; do
@@ -34,8 +37,7 @@ done
 
 shift $(($OPTIND - 1));
 
-
-set -e
+[[ $# -ge 1 ]] || usage
 
 SERVICE_NAME=$1; shift
 NODE_USER="ansible"
@@ -54,15 +56,36 @@ for arg in "$@"; do
   fi
 done
 
-TASK_ID=$(docker service ps --filter 'desired-state=running' $SERVICE_NAME -q)
-log "Got task id: $TASK_ID"
-NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
-CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
-NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
+TASK_ID=$(docker service ps --filter 'desired-state=running' "$SERVICE_NAME" -q 2>&1) \
+  || die "failed to find service '$SERVICE_NAME': $TASK_ID"
+
+TASK_COUNT=$(echo "$TASK_ID" | wc -l | tr -d ' ')
+if [[ -z "$TASK_ID" ]]; then
+  die "no running tasks found for service '$SERVICE_NAME'"
+elif [[ "$TASK_COUNT" -gt 1 ]]; then
+  die "multiple running tasks found for service '$SERVICE_NAME' (expected 1, got $TASK_COUNT)"
+fi
+log "task: $TASK_ID"
+
+NODE_ID=$(docker inspect --format '{{ .NodeID }}' "$TASK_ID" 2>&1) \
+  || die "failed to inspect task '$TASK_ID': $NODE_ID"
+[[ -n "$NODE_ID" ]] || die "task '$TASK_ID' has no NodeID (task may be pending)"
+log "node: $NODE_ID"
+
+CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' "$TASK_ID" 2>&1) \
+  || die "failed to get container ID from task '$TASK_ID': $CONTAINER_ID"
+[[ -n "$CONTAINER_ID" ]] || die "task '$TASK_ID' has no container ID (container may not have started)"
+log "container: $CONTAINER_ID"
+
+NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' "$NODE_ID" 2>&1) \
+  || die "failed to inspect node '$NODE_ID': $NODE_HOST"
+[[ -n "$NODE_HOST" ]] || die "node '$NODE_ID' has no hostname"
+log "host: $NODE_HOST"
 
 TTY_OPTS="-i"
 if [ -t 0 ]; then
   TTY_OPTS="-it"
 fi
 
-DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec $TTY_OPTS "${EXEC_OPTS[@]}" $CONTAINER_ID "$@"
+log "exec: DOCKER_HOST=ssh://$NODE_USER@${NODE_HOST}.lan docker exec $TTY_OPTS ${EXEC_OPTS[*]} $CONTAINER_ID $*"
+DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" docker exec $TTY_OPTS "${EXEC_OPTS[@]}" "$CONTAINER_ID" "$@"
