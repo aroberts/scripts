@@ -10,11 +10,11 @@ MODE="get"
 OVERWRITE=0
 VERBOSE=0
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ -x "$SCRIPT_DIR/keymaster" ]]; then
-  KEYMASTER="$SCRIPT_DIR/keymaster"
-else
-  KEYMASTER="keymaster"
+KEYMASTER="${ANSIBLE_VAULT_KEYMASTER_PATH:-keymaster}"
+if ! command -v "$KEYMASTER" >/dev/null 2>&1; then
+  echo "ERROR: keymaster binary not found: $KEYMASTER" >&2
+  echo "Set ANSIBLE_VAULT_KEYMASTER_PATH or ensure 'keymaster' is on \$PATH." >&2
+  exit 1
 fi
 
 usage() {
@@ -34,6 +34,10 @@ The keychain entry is stored under the service name:
 
 With no flags, prints the password to stdout (for use as ansible's
 vault_password_file).
+
+Environment:
+  ANSIBLE_VAULT_KEYMASTER_PATH  Path to the keymaster binary. Defaults to
+                                'keymaster' on \$PATH.
 EOF
 }
 
