@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ansible-vault-keymaster: Ansible vault password file backed by keymaster
+# (TouchID-protected keychain). Default mode prints the password to stdout
+# so it can be used directly as ansible's vault_password_file.
+
+PROJECT="$(basename "$PWD")"
+MODE="get"
+OVERWRITE=0
+VERBOSE=0
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -x "$SCRIPT_DIR/keymaster" ]]; then
+  KEYMASTER="$SCRIPT_DIR/keymaster"
+else
+  KEYMASTER="keymaster"
+fi
+
+usage() {
+  cat >&2 <<EOF
+Usage: $(basename "$0") [options]
+
+Options:
+  -s            Set password (prompts on stdin, confirmed)
+  -X            Delete password
+  -O            Overwrite existing password on -s
+  -p <project>  Project name [default: current directory name]
+  -v            Verbose: pass -v to keymaster
+  -h            Show this help
+
+The keychain entry is stored under the service name:
+  "Ansible vault password: <project>"
+
+With no flags, prints the password to stdout (for use as ansible's
+vault_password_file).
+EOF
+}
+
+while getopts ":sXOp:vh" opt; do
+  case "$opt" in
+    s) MODE="set" ;;
+    X) MODE="delete" ;;
+    O) OVERWRITE=1 ;;
+    p) PROJECT="$OPTARG" ;;
+    v) VERBOSE=1 ;;
+    h) usage; exit 0 ;;
+    \?) echo "Invalid option: -$OPTARG" >&2; usage; exit 1 ;;
+    :)  echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
+  esac
+done
+
+LABEL="Ansible vault password: $PROJECT"
+
+km() {
+  if [[ "$VERBOSE" -eq 1 ]]; then
+    "$KEYMASTER" -v "$@"
+  else
+    "$KEYMASTER" "$@"
+  fi
+}
+
+case "$MODE" in
+  get)
+    km get "$LABEL"
+    ;;
+
+  set)
+    echo "Setting ansible vault password for project '$PROJECT':" >&2
+
+    read -rsp "Password: " password
+    echo >&2
+    read -rsp "Confirm password: " confirm
+    echo >&2
+
+    if [[ "$password" != "$confirm" ]]; then
+      echo "ERROR: Passwords do not match." >&2
+      exit 1
+    fi
+    if [[ -z "$password" ]]; then
+      echo "ERROR: Password is blank." >&2
+      exit 1
+    fi
+
+    if [[ "$OVERWRITE" -eq 1 ]]; then
+      km delete "$LABEL" >/dev/null 2>&1 || true
+    fi
+
+    if ! printf '%s' "$password" | km set "$LABEL"; then
+      echo "ERROR: Failed to store password in keymaster." >&2
+      if [[ "$OVERWRITE" -ne 1 ]]; then
+        echo "Hint: an entry may already exist — re-run with -O to overwrite." >&2
+      fi
+      exit 1
+    fi
+    ;;
+
+  delete)
+    km delete "$LABEL"
+    ;;
+esac
