@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# logcli-local: wrap Grafana Loki's logcli with credentials pulled from the
+# macOS keychain via keymaster (TouchID). Variables are exported only inside
+# a subshell so they never enter the parent shell's environment.
+#
+# Domain is selected by $LOGCLI_LOCAL_DOMAIN (default: pcrn). All script args
+# are forwarded to logcli unchanged.
+#
+# Keychain layout (two entries per domain, managed with keymaster directly):
+#   "Loki address: <domain>"     -> e.g. https://logs.example.com
+#   "Loki credentials: <domain>" -> "<username>:<password>" (split on first ':')
+#
+# One-time setup (example for the default 'pcrn' domain):
+#   printf '%s' 'https://logs.example.com' | keymaster set 'Loki address: pcrn'
+#   printf '%s' 'myuser:mypassword'        | keymaster set 'Loki credentials: pcrn'
+
+domain="${LOGCLI_LOCAL_DOMAIN:-pcrn}"
+
+addr_key="Loki address: $domain"
+creds_key="Loki credentials: $domain"
+
+for bin in keymaster logcli; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "ERROR: required binary not found on \$PATH: $bin" >&2
+    exit 1
+  fi
+done
+
+# Share a single TouchID prompt across both keymaster gets via session reuse.
+export KEYMASTER_SESSION="logcli-local:$domain"
+# export KEYMASTER_TTL=300  # session reuse window in seconds (keymaster default: 300)
+
+addr="$(keymaster get "$addr_key")"
+if [[ -z "$addr" ]]; then
+  echo "ERROR: keychain entry '$addr_key' is empty or missing." >&2
+  exit 1
+fi
+
+creds="$(keymaster get "$creds_key")"
+if [[ -z "$creds" ]]; then
+  echo "ERROR: keychain entry '$creds_key' is empty or missing." >&2
+  exit 1
+fi
+
+if [[ "$creds" != *:* ]]; then
+  echo "ERROR: '$creds_key' must be 'username:password'." >&2
+  exit 1
+fi
+
+user="${creds%%:*}"
+pass="${creds#*:}"
+
+if [[ -z "$user" ]]; then
+  echo "ERROR: username portion of '$creds_key' is empty." >&2
+  exit 1
+fi
+
+(
+  export LOKI_ADDR="$addr"
+  export LOKI_USERNAME="$user"
+  export LOKI_PASSWORD="$pass"
+  exec logcli "$@"
+)
