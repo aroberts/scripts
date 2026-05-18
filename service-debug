@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# use `docker context` to swap into the swarm cluster
+
+# debug interactive command in docker swarm service using cdebug; makes a lot
+# of assumptions tying it to my particular deployment.
+#
+# requires cdebug with ssh:// DOCKER_HOST support
+# (https://github.com/iximiuz/cdebug/pull/82 until merged).
+
+DEFAULT_IMAGE="nicolaka/netshoot"
+
+usage() {
+  echo "Usage: $0 [-v] [-i IMAGE] SERVICE_NAME [CDEBUG_OPTS...] [--] [CMD [CMD_ARGS...]]"
+  echo "  -v          Additional logging"
+  echo "  -i IMAGE    Debug image (default: $DEFAULT_IMAGE)"
+  echo "  --          Separator between cdebug options and command"
+  exit 1
+}
+
+die() {
+  >&2 echo "error: $1"
+  exit 1
+}
+
+log() {
+  if [ -n "$DEBUG" ]; then
+    >&2 echo "$1"
+  fi
+}
+
+command -v cdebug >/dev/null 2>&1 \
+  || die "cdebug not found in PATH (see https://github.com/iximiuz/cdebug)"
+
+IMAGE="$DEFAULT_IMAGE"
+
+while getopts ":vi:" opt; do
+  case $opt in
+    v)
+      DEBUG=1
+      ;;
+    i)
+      IMAGE="$OPTARG"
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
+
+shift $(($OPTIND - 1));
+
+[[ $# -ge 1 ]] || usage
+
+SERVICE_NAME=$1; shift
+NODE_USER="ansible"
+
+CDEBUG_OPTS=()
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    while [[ $# -gt 0 && "$1" != "--" ]]; do
+      CDEBUG_OPTS+=("$1")
+      shift
+    done
+    shift
+    break
+  fi
+done
+
+TASK_ID=$(docker service ps --filter 'desired-state=running' "$SERVICE_NAME" -q 2>&1) \
+  || die "failed to find service '$SERVICE_NAME': $TASK_ID"
+
+TASK_COUNT=$(echo "$TASK_ID" | wc -l | tr -d ' ')
+if [[ -z "$TASK_ID" ]]; then
+  die "no running tasks found for service '$SERVICE_NAME'"
+elif [[ "$TASK_COUNT" -gt 1 ]]; then
+  die "multiple running tasks found for service '$SERVICE_NAME' (expected 1, got $TASK_COUNT)"
+fi
+log "task: $TASK_ID"
+
+NODE_ID=$(docker inspect --format '{{ .NodeID }}' "$TASK_ID" 2>&1) \
+  || die "failed to inspect task '$TASK_ID': $NODE_ID"
+[[ -n "$NODE_ID" ]] || die "task '$TASK_ID' has no NodeID (task may be pending)"
+log "node: $NODE_ID"
+
+CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' "$TASK_ID" 2>&1) \
+  || die "failed to get container ID from task '$TASK_ID': $CONTAINER_ID"
+[[ -n "$CONTAINER_ID" ]] || die "task '$TASK_ID' has no container ID (container may not have started)"
+log "container: $CONTAINER_ID"
+
+NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' "$NODE_ID" 2>&1) \
+  || die "failed to inspect node '$NODE_ID': $NODE_HOST"
+[[ -n "$NODE_HOST" ]] || die "node '$NODE_ID' has no hostname"
+log "host: $NODE_HOST"
+
+# --privileged so the sidecar can access /proc/PID/root/ regardless of target uid
+log "exec: DOCKER_HOST=ssh://$NODE_USER@${NODE_HOST}.lan cdebug exec --image $IMAGE --privileged ${CDEBUG_OPTS[*]} $CONTAINER_ID $*"
+DOCKER_HOST="ssh://$NODE_USER@${NODE_HOST}.lan" cdebug exec \
+  --image "$IMAGE" \
+  --privileged \
+  "${CDEBUG_OPTS[@]}" \
+  "$CONTAINER_ID" \
+  "$@"
