@@ -57,11 +57,15 @@ done
 LABEL="Ansible vault password: $PROJECT"
 
 km() {
-  if [[ "$VERBOSE" -eq 1 ]]; then
-    "$KEYMASTER" -v "$@"
-  else
-    "$KEYMASTER" "$@"
-  fi
+  # Build a non-empty argv array (safe under `set -u` on bash 3.2, macOS's
+  # /bin/bash). When KEYMASTER_SESSION is set (e.g. by bin/secret naming the
+  # session after the current Claude conversation), scope the call to that
+  # session so keymaster's auth prompt shows *why* it is asking and only
+  # prompts once per session.
+  local -a cmd=("$KEYMASTER")
+  [[ "$VERBOSE" -eq 1 ]] && cmd+=(-v)
+  [[ -n "${KEYMASTER_SESSION:-}" ]] && cmd+=(-s "$KEYMASTER_SESSION")
+  "${cmd[@]}" "$@"
 }
 
 case "$MODE" in
