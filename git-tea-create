@@ -1,0 +1,24 @@
+#!/bin/bash
+# Create a Gitea repo named after the current git repo and add it as origin.
+# Extra args are passed to `tea repo create` (e.g. --private, --owner ORG).
+set -euo pipefail
+
+die() { echo "git-tea-create: $*" >&2; exit 1; }
+
+toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || die "not in a git repo"
+[ -z "$(git -C "$toplevel" remote)" ] || die "repo already has remotes: $(git -C "$toplevel" remote | xargs)"
+
+name=$(basename "$toplevel")
+
+# tea ignores --output here and renders markdown, but always prints the
+# HTML URL as its last line, so derive owner/name from that.
+out=$(tea repo create --name "$name" "$@") || die "tea repo create failed"
+echo "$out"
+html_url=$(tail -n1 <<<"$out")
+slug=$(sed -E 's#^https?://[^/]+/##; s#/$##' <<<"$html_url")
+[[ "$slug" == */* ]] || die "could not parse repo URL from tea output: $html_url"
+
+clone_url=$(tea api "repos/$slug" | jq -er .ssh_url) || die "could not look up clone url for $slug"
+
+git -C "$toplevel" remote add origin "$clone_url"
+echo "origin -> $clone_url"
