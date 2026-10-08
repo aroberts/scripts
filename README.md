@@ -49,6 +49,9 @@ For deploying to remote hosts (e.g., hypervisors):
 
 ## Scripts with Completions
 
-- **appdir**: Navigate to docker service directories
-  - Requires: `DOCKER_APP_ROOT` environment variable
-  - Completion: `completions/_appdir`
+- **wt**: Jump between git worktrees of the current repo
+  - Matches a branch name, worktree dir basename, or unique substring; prompts when ambiguous
+  - Keeps your subdirectory when it exists in the target (`-r` for the root); `-l` lists
+  - Prints the path, so it needs a shell wrapper to `cd`:
+    `wt() { local d; d=$(command wt "$@") || return; [[ -z $d ]] || cd "$d"; }`
+  - Completion: `completions/_wt`

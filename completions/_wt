@@ -1,0 +1,19 @@
+#compdef wt
+
+_wt() {
+  local -a worktrees
+  local line wtpath
+  for line in ${(f)"$(git worktree list --porcelain 2>/dev/null)"}; do
+    case $line in
+      "worktree "*) wtpath=${line#worktree } ;;
+      "branch "*) worktrees+=("${${line#branch refs/heads/}//:/\\:}:${wtpath/#$HOME/~}") ;;
+    esac
+  done
+
+  _arguments \
+    '(-l --list)'{-l,--list}'[list worktrees]' \
+    '(-r --root)'{-r,--root}'[go to worktree root, not the same subdirectory]' \
+    '1: :{_describe worktree worktrees}'
+}
+
+_wt "$@"

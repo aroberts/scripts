@@ -1,0 +1,112 @@
+#!/bin/bash
+# wt - Resolve a git worktree directory for the current repo
+# Usage: wt [-l] [-r] [<name>]
+#   <name>: branch name, worktree dir basename, or unique substring of either.
+#           Omit to pick from a menu.
+#   -l: List worktrees and exit
+#   -r: Go to the worktree root instead of the same subdirectory
+#
+# Outputs the resolved directory path to stdout. By default it keeps your
+# position: from repo/src/foo, `wt other` resolves to other/src/foo if it exists.
+# Use with wrapper: wt() { local d; d=$(command wt "$@") && [[ -n $d ]] && cd "$d"; }
+
+set -euo pipefail
+
+die() { echo "wt: $*" >&2; exit 1; }
+
+list_only=false
+to_root=false
+query=""
+
+for arg in "$@"; do
+  case "$arg" in
+    -l|--list) list_only=true ;;
+    -r|--root) to_root=true ;;
+    -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0" >&2; exit 0 ;;
+    -*) die "unknown option: $arg" ;;
+    *) [[ -z "$query" ]] && query="$arg" ;;
+  esac
+done
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "not in a git repo"
+
+# Parse porcelain output into parallel arrays, skipping bare and missing worktrees.
+paths=()
+branches=()
+path="" branch="" skip=false
+flush() {
+  if [[ -n "$path" && "$skip" == false && -d "$path" ]]; then
+    paths+=("$path")
+    branches+=("$branch")
+  fi
+  path="" branch="" skip=false
+}
+while IFS= read -r line; do
+  case "$line" in
+    "worktree "*) path=${line#worktree } ;;
+    "branch "*) branch=${line#branch refs/heads/} ;;
+    "detached") branch="(detached)" ;;
+    "bare") skip=true ;;
+    "") flush ;;
+  esac
+done < <(git worktree list --porcelain; echo)
+
+[[ ${#paths[@]} -gt 0 ]] || die "no worktrees found"
+
+current=$(git rev-parse --show-toplevel 2>/dev/null || true)
+
+# print_row <number> <index>
+print_row() {
+  local mark=" "
+  [[ "${paths[$2]}" == "$current" ]] && mark="*"
+  printf '%s %2d. %-30s %s\n' "$mark" "$1" "${branches[$2]}" "${paths[$2]/#$HOME/~}" >&2
+}
+
+if [[ "$list_only" == true ]]; then
+  for i in "${!paths[@]}"; do print_row $((i+1)) "$i"; done
+  exit 0
+fi
+
+# Collect candidate indices: exact branch/basename matches win over substrings.
+matches=()
+if [[ -n "$query" ]]; then
+  for i in "${!paths[@]}"; do
+    if [[ "${branches[$i]}" == "$query" || "$(basename "${paths[$i]}")" == "$query" ]]; then
+      matches+=("$i")
+    fi
+  done
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    for i in "${!paths[@]}"; do
+      if [[ "${branches[$i]}" == *"$query"* || "$(basename "${paths[$i]}")" == *"$query"* ]]; then
+        matches+=("$i")
+      fi
+    done
+  fi
+  [[ ${#matches[@]} -gt 0 ]] || die "no worktree matching '$query'"
+else
+  matches=("${!paths[@]}")
+fi
+
+if [[ ${#matches[@]} -eq 1 ]]; then
+  idx=${matches[0]}
+else
+  # Interactive selection (prompts go to stderr, read from tty)
+  for n in "${!matches[@]}"; do print_row $((n+1)) "${matches[$n]}"; done
+  echo -n "Select (1-${#matches[@]}): " >&2
+  read -r selection </dev/tty
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || [[ "$selection" -lt 1 ]] || [[ "$selection" -gt ${#matches[@]} ]]; then
+    die "invalid selection"
+  fi
+  idx=${matches[$((selection-1))]}
+fi
+
+target=${paths[$idx]}
+
+if [[ "$to_root" == false ]]; then
+  prefix=$(git rev-parse --show-prefix 2>/dev/null || true)
+  if [[ -n "$prefix" && -d "$target/$prefix" ]]; then
+    target="$target/${prefix%/}"
+  fi
+fi
+
+echo "$target"
