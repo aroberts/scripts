@@ -1,16 +1,16 @@
 #!/bin/bash
-# Ask Claude how to do something in Zed, e.g. `zed-how find symbol in project`.
+# Ask Claude how to do something in Zed, e.g. `how-zed find symbol in project`.
 #
 # Claude greps Zed's built-in keymaps and action list for the installed
 # version, your keymap.json and settings.json, and the key bindings of your
 # interactive shell (which Zed's terminal panel passes unbound keys through
 # to), then explains which keys to press.
 #
-# Built-in keymaps are cached per Zed version under ~/.cache/zed-how/.
-# Set ZED_HOW_MODEL to use a different model (default: sonnet).
+# Built-in keymaps are cached per Zed version under ~/.cache/how-zed/.
+# Set HOW_ZED_MODEL to use a different model (default: sonnet).
 set -euo pipefail
 
-die() { echo "zed-how: $*" >&2; exit 1; }
+die() { echo "how-zed: $*" >&2; exit 1; }
 
 # Flattens Zed keymap files (JSON with comments and trailing commas) to one
 # tab-separated line per binding: source, context, keystrokes, action.
@@ -61,7 +61,7 @@ for arg in sys.argv[1:]:
 PY
 }
 
-[ $# -gt 0 ] || die "usage: zed-how <description of an action>"
+[ $# -gt 0 ] || die "usage: how-zed <description of an action>"
 command -v claude >/dev/null || die "claude not found"
 command -v zed >/dev/null || die "zed CLI not found"
 
@@ -84,14 +84,14 @@ case $(uname) in
 esac
 config=$(cd "$config" && pwd -P) || die "no Zed config dir"
 
-cache=${XDG_CACHE_HOME:-$HOME/.cache}/zed-how/$version
-run=$(mktemp -d "${TMPDIR:-/tmp}/zed-how.XXXXXX")
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/how-zed/$version
+run=$(mktemp -d "${TMPDIR:-/tmp}/how-zed.XXXXXX")
 trap 'rm -rf "$run"' EXIT
 # --restricted confines file tools to real paths of the dirs it's given
 run=$(cd "$run" && pwd -P)
 
 if [ ! -f "$cache/builtin-bindings.tsv" ]; then
-  echo "zed-how: caching keymaps for Zed $version" >&2
+  echo "how-zed: caching keymaps for Zed $version" >&2
   fetch=$run/fetch
   mkdir "$fetch"
   src=https://raw.githubusercontent.com/zed-industries/zed/v$version/assets/keymaps
@@ -115,7 +115,7 @@ bindings=$run/bindings.tsv
 cp "$cache/builtin-bindings.tsv" "$bindings"
 if [ -f "$config/keymap.json" ]; then
   flatten user="$config/keymap.json" >>"$bindings" \
-    || echo "zed-how: could not parse $config/keymap.json" >&2
+    || echo "how-zed: could not parse $config/keymap.json" >&2
 fi
 
 # A fresh interactive shell loads the same rc files, plugins included, as the
@@ -176,7 +176,7 @@ EOF
 
 cd "$cache"
 printf 'How do I %s?\n' "$*" | claude -p \
-  --model "${ZED_HOW_MODEL:-sonnet}" \
+  --model "${HOW_ZED_MODEL:-sonnet}" \
   --system-prompt "$system" \
   --restricted \
   --tools Read,Grep,Glob,WebFetch \
