@@ -1,0 +1,186 @@
+#!/bin/bash
+# Ask Claude how to do something in Zed, e.g. `zed-how find symbol in project`.
+#
+# Claude greps Zed's built-in keymaps and action list for the installed
+# version, your keymap.json and settings.json, and the key bindings of your
+# interactive shell (which Zed's terminal panel passes unbound keys through
+# to), then explains which keys to press.
+#
+# Built-in keymaps are cached per Zed version under ~/.cache/zed-how/.
+# Set ZED_HOW_MODEL to use a different model (default: sonnet).
+set -euo pipefail
+
+die() { echo "zed-how: $*" >&2; exit 1; }
+
+# Flattens Zed keymap files (JSON with comments and trailing commas) to one
+# tab-separated line per binding: source, context, keystrokes, action.
+# Args: source=path ...
+flatten() {
+  python3 -I - "$@" <<'PY'
+import json, sys
+
+def strip_jsonc(text):
+  out, i, n, in_str = [], 0, len(text), False
+  while i < n:
+    c = text[i]
+    if in_str:
+      if c == '\\':
+        out.append(text[i:i + 2])
+        i += 2
+        continue
+      in_str = c != '"'
+    elif c == '"':
+      in_str = True
+    elif text.startswith('//', i):
+      j = text.find('\n', i)
+      i = n if j < 0 else j
+      continue
+    elif text.startswith('/*', i):
+      i = text.index('*/', i) + 2
+      continue
+    elif c in '}]':
+      k = len(out)
+      while k and out[k - 1].isspace():
+        k -= 1
+      if k and out[k - 1] == ',':
+        del out[k - 1]
+    out.append(c)
+    i += 1
+  return ''.join(out)
+
+for arg in sys.argv[1:]:
+  source, path = arg.split('=', 1)
+  with open(path) as f:
+    sections = json.loads(strip_jsonc(f.read()))
+  for section in sections:
+    context = section.get('context') or '(none)'
+    for keys, target in (section.get('unbind') or {}).items():
+      print(source, context, keys, 'unbind ' + json.dumps(target), sep='\t')
+    for keys, action in (section.get('bindings') or {}).items():
+      print(source, context, keys, json.dumps(action), sep='\t')
+PY
+}
+
+[ $# -gt 0 ] || die "usage: zed-how <description of an action>"
+command -v claude >/dev/null || die "claude not found"
+command -v zed >/dev/null || die "zed CLI not found"
+
+version=$(zed --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-pre)?' | head -n1) \
+  || die "could not parse version from: $(zed --version)"
+
+# mirrors DEFAULT_KEYMAP_PATH, SPECIFIC_OVERRIDES_KEYMAP_PATH and
+# paths::config_dir() in Zed's source
+case $(uname) in
+  Darwin)
+    os=macos
+    overrides=specific-overrides-macos.json
+    config=$HOME/.config/zed
+    ;;
+  *)
+    os=linux
+    overrides=specific-overrides.json
+    config=${XDG_CONFIG_HOME:-$HOME/.config}/zed
+    ;;
+esac
+config=$(cd "$config" && pwd -P) || die "no Zed config dir"
+
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/zed-how/$version
+run=$(mktemp -d "${TMPDIR:-/tmp}/zed-how.XXXXXX")
+trap 'rm -rf "$run"' EXIT
+# --restricted confines file tools to real paths of the dirs it's given
+run=$(cd "$run" && pwd -P)
+
+if [ ! -f "$cache/builtin-bindings.tsv" ]; then
+  echo "zed-how: caching keymaps for Zed $version" >&2
+  fetch=$run/fetch
+  mkdir "$fetch"
+  src=https://raw.githubusercontent.com/zed-industries/zed/v$version/assets/keymaps
+  for f in "default-$os.json" vim.json "$overrides"; do
+    curl -fsSL "$src/$f" -o "$fetch/$f" || die "could not fetch $src/$f"
+  done
+  # generated at docs build time, so this tracks the latest stable release
+  # rather than $version
+  curl -fsSL https://zed.dev/docs/all-actions.md -o "$fetch/all-actions.md" \
+    || die "could not fetch the Zed action list"
+  # sources in Zed's load order
+  flatten default="$fetch/default-$os.json" vim="$fetch/vim.json" \
+    overrides="$fetch/$overrides" >"$fetch/builtin-bindings.tsv" \
+    || die "could not parse Zed's built-in keymaps"
+  mkdir -p "$(dirname "$cache")"
+  rm -rf "$cache"
+  mv "$fetch" "$cache"
+fi
+
+bindings=$run/bindings.tsv
+cp "$cache/builtin-bindings.tsv" "$bindings"
+if [ -f "$config/keymap.json" ]; then
+  flatten user="$config/keymap.json" >>"$bindings" \
+    || echo "zed-how: could not parse $config/keymap.json" >&2
+fi
+
+# A fresh interactive shell loads the same rc files, plugins included, as the
+# one Zed's terminal panel starts.
+shell_binds=$run/shell-bindings.txt
+if [[ ${SHELL##*/} == zsh ]]; then
+  "$SHELL" -ic 'for m in $(bindkey -l); do
+    [[ $m == .safe ]] || bindkey -M $m -L
+  done; bindkey -lL main' </dev/null >"$shell_binds" 2>/dev/null || true
+fi
+[ -s "$shell_binds" ] || echo "(no bindings captured from $SHELL)" >"$shell_binds"
+
+read -r -d '' system <<EOF || true
+You answer one question about how to do something in the Zed editor, using
+this user's actual configuration. The run is one-shot and non-interactive:
+never ask questions, and answer from what you find.
+
+Files (Zed $version on $os):
+- $bindings: every Zed key binding, one per line, tab-separated: source,
+  context, keystrokes, action (JSON). Sources in load order: default, vim
+  (loaded when settings.json sets vim_mode or helix_mode), overrides, user.
+  An action of null, or "unbind ...", removes a binding.
+- $config/keymap.json: the user's keymap. Its comments explain intent.
+- $config/settings.json: the user's settings (vim_mode, base_keymap, ...)
+- $cache/all-actions.md: every action with its command palette name,
+  keymap name (namespace::Action) and description
+- $shell_binds: key bindings from the user's interactive zsh, as
+  \`bindkey -M <keymap> -L\` per keymap. \`bindkey -A viins main\` means
+  vi insert mode is the default.
+
+Precedence: a binding whose context matches lower in the context tree
+(Editor) beats one matching higher (Workspace). At the same level, the
+later-loaded binding wins. Base keymap overlays aren't included, so warn if
+settings.json sets base_keymap to anything but "Zed". In the terminal panel,
+Zed handles any keystroke bound in a matching context (Terminal, Pane,
+Workspace) first, and only unbound keystrokes reach the shell, so a Zed
+binding can shadow a shell binding there.
+
+Method: grep all-actions.md for candidate actions, trying synonyms. Grep
+bindings.tsv for each candidate's keymap name to get every binding with its
+context. List every one unless its context can never match under the
+user's settings (e.g. helix contexts when helix_mode is off). Bindings for
+other focus targets, like panels (!Editor), still count. For each key you
+cite, grep bindings.tsv for that keystroke to find user bindings that
+override or shadow it. Check the shell bindings when the task could happen
+in the terminal panel or at a shell prompt. WebFetch zed.dev docs only if
+the local files don't answer the question.
+
+Your final message is printed verbatim as the answer, so it must hold only
+the answer, with no working notes. Check anything you're unsure of instead
+of hedging about it. Write tersely for a terminal. Lead with the keystrokes
+and the context they work in (e.g. "vim normal mode in an editor"), user
+bindings first. Give the command palette name, copied verbatim from
+all-actions.md. Point out default or shell bindings that a user binding
+overrides or shadows. If nothing does the task, say so and name the closest
+action. No preamble and no closing summary.
+EOF
+
+cd "$cache"
+printf 'How do I %s?\n' "$*" | claude -p \
+  --model "${ZED_HOW_MODEL:-sonnet}" \
+  --system-prompt "$system" \
+  --restricted \
+  --tools Read,Grep,Glob,WebFetch \
+  --allowedTools 'WebFetch(domain:zed.dev)' \
+  --add-dir "$config" "$run" \
+  --strict-mcp-config \
+  --no-session-persistence
