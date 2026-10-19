@@ -1,0 +1,12 @@
+#compdef git-sweep
+
+_git-sweep() {
+  _arguments -s \
+    '(-n --dry-run)'{-n,--dry-run}'[show what would be deleted without doing it]' \
+    '(-w --worktrees)'{-w,--worktrees}'[remove clean worktrees of landed branches]' \
+    '--github[check merged PRs for gone branches whose changes were not found]' \
+    '--no-fetch[skip fetching origin first]' \
+    '(-h --help)'{-h,--help}'[show help]'
+}
+
+_git-sweep "$@"

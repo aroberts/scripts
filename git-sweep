@@ -1,0 +1,232 @@
+#!/bin/bash
+set -e
+
+red="\033[00;31m"
+green="\033[00;32m"
+yellow="\033[00;33m"
+reset="\033[00m"
+
+usage() {
+  cat <<EOF
+Usage: git sweep [options]
+
+Delete local branches whose changes have landed on origin's default branch,
+whether by merge, rebase-merge, or squash-merge. Branches whose remote branch
+is gone but whose changes can't be found are listed and kept.
+
+Options:
+  -n, --dry-run       show what would be deleted without doing it
+  -w, --worktrees     remove clean worktrees of landed branches, then delete them
+  --github            check merged PRs for branches whose remote is gone but
+                      whose changes weren't found (needs gh and a GitHub origin)
+  --no-fetch          skip fetching origin first
+  -h, --help          show this help
+EOF
+}
+
+die() {
+  echo -e "${red}error:${reset} $*" >&2
+  exit 1
+}
+
+# report <color> <label> <branch> <detail>
+report() {
+  printf "%b%-12s%b %s  %s\n" "$1" "$2" "$reset" "$3" "$4"
+}
+
+run() {
+  [ -n "$dryrun" ] || "$@"
+}
+
+# Returns 0 and sets $reason if the changes on commit $1 are already on $base.
+landed() {
+  local tip=$1 mb cherry squash
+
+  if git merge-base --is-ancestor "$tip" "$base"; then
+    reason="merged"
+    return 0
+  fi
+
+  mb=$(git merge-base "$base" "$tip") || return 1
+
+  # a single upstream commit carries the branch's whole diff: build a
+  # throwaway commit of that diff (left dangling for gc) and ask cherry about
+  # it. Skipped when there's no net diff, which would match any empty commit.
+  if [ "$(git rev-parse "$tip^{tree}")" != "$(git rev-parse "$mb^{tree}")" ]; then
+    squash=$(GIT_AUTHOR_NAME=git-sweep GIT_AUTHOR_EMAIL=git-sweep@localhost \
+      GIT_COMMITTER_NAME=git-sweep GIT_COMMITTER_EMAIL=git-sweep@localhost \
+      git commit-tree --no-gpg-sign -p "$mb" -m squash "$tip^{tree}")
+    if git cherry "$base" "$squash" | grep -q '^-'; then
+      reason="squash-merged"
+      return 0
+    fi
+  fi
+
+  # every non-merge commit has a patch-equivalent commit upstream
+  cherry=$(git cherry "$base" "$tip")
+  if [ -n "$cherry" ] && ! grep -q '^+' <<<"$cherry"; then
+    reason="rebase-merged"
+    return 0
+  fi
+
+  return 1
+}
+
+# Returns 0 and sets $reason if a merged PR from branch $1 contains commit $2.
+pr_landed() {
+  local branch=$1 tip=$2 prs number oid
+
+  if ! prs=$(gh pr list --repo "$slug" --head "$branch" --state merged \
+      --json number,headRefOid --jq '.[] | "\(.number) \(.headRefOid)"'); then
+    echo -e "${yellow}warning:${reset} gh pr list failed for $branch" >&2
+    return 1
+  fi
+
+  while read -r number oid; do
+    [ -n "$oid" ] || continue
+    # the PR head may be ahead of the local tip if commits were pushed from elsewhere
+    if [ "$oid" = "$tip" ] || { git cat-file -e "$oid^{commit}" 2>/dev/null &&
+        git merge-base --is-ancestor "$tip" "$oid"; }; then
+      reason="PR #$number merged"
+      return 0
+    fi
+  done <<<"$prs"
+
+  return 1
+}
+
+main() {
+  dryrun=""
+  worktrees=""
+  github=""
+  fetch="true"
+  remote="origin"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n|--dry-run)
+        dryrun="true"
+        ;;
+      -w|--worktrees)
+        worktrees="true"
+        ;;
+      --github)
+        github="true"
+        ;;
+      --no-fetch)
+        fetch=""
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo -e "${red}error:${reset} unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not in a git repo"
+  url=$(git remote get-url "$remote" 2>/dev/null) || die "no remote named $remote"
+
+  # all --github checks run before anything is fetched or deleted
+  if [ -n "$github" ]; then
+    case "$url" in
+      *github.com[:/]*) ;;
+      *) die "--github needs $remote on github.com, but it's $url" ;;
+    esac
+    command -v gh >/dev/null || die "--github needs gh installed"
+    gh auth status --hostname github.com >/dev/null 2>&1 ||
+      die "--github needs gh logged in to github.com (gh auth login)"
+    slug=${url#*github.com[:/]}
+    slug=${slug%/}
+    slug=${slug%.git}
+  fi
+
+  if [ -n "$fetch" ]; then
+    git fetch --prune --quiet "$remote" ||
+      die "fetch from $remote failed (--no-fetch to use what's already fetched)"
+  fi
+
+  base=$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
+  if [ -z "$base" ]; then
+    for b in main master; do
+      if git show-ref --verify --quiet "refs/remotes/$remote/$b"; then
+        base="$remote/$b"
+        break
+      fi
+    done
+  fi
+  [ -n "$base" ] || die "can't find $remote's default branch (try: git remote set-head $remote --auto)"
+  default=${base#"$remote"/}
+
+  current=$(git symbolic-ref --quiet --short HEAD || true)
+  main_worktree=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+
+  # without --github, only hint at it where it could work
+  hint=""
+  if [ -n "$github" ]; then
+    hint=" or in a merged PR"
+  else
+    case "$url" in
+      *github.com[:/]*) hint=" (--github checks merged PRs)" ;;
+    esac
+  fi
+
+  swept=0
+  deleted_label="deleted"
+  [ -z "$dryrun" ] || deleted_label="would delete"
+
+  # fd 3 keeps the branch list away from anything in the loop that reads stdin
+  while IFS=: read -r branch tip track wtpath <&3; do
+    case "$branch" in
+      "$current"|"$default"|main|master|develop) continue ;;
+    esac
+
+    if landed "$tip"; then
+      :
+    elif [ "$track" = gone ] && [ -n "$github" ] && pr_landed "$branch" "$tip"; then
+      :
+    else
+      if [ "$track" = gone ]; then
+        report "$yellow" kept "$branch" "remote branch is gone, but its changes aren't on $base$hint"
+      fi
+      continue
+    fi
+
+    detail="$reason, was $(git rev-parse --short "$tip")"
+
+    if [ -n "$wtpath" ]; then
+      if [ "$wtpath" = "$main_worktree" ]; then
+        report "$yellow" skipped "$branch" "$reason, checked out in main worktree $wtpath"
+        continue
+      fi
+      if [ -z "$worktrees" ]; then
+        report "$yellow" skipped "$branch" "$reason, checked out in $wtpath (-w to remove)"
+        continue
+      fi
+      if [ -n "$(git -C "$wtpath" status --porcelain 2>/dev/null)" ]; then
+        report "$yellow" skipped "$branch" "$reason, but worktree $wtpath has changes"
+        continue
+      fi
+      if ! run git worktree remove "$wtpath"; then
+        report "$red" failed "$branch" "couldn't remove worktree $wtpath"
+        continue
+      fi
+      detail="$detail, worktree $wtpath"
+    fi
+
+    run git branch --quiet -D "$branch"
+    report "$green" "$deleted_label" "$branch" "$detail"
+    swept=$((swept + 1))
+  done 3< <(git for-each-ref \
+    --format='%(refname:lstrip=2):%(objectname):%(upstream:track,nobracket):%(worktreepath)' \
+    refs/heads)
+
+  [ "$swept" -gt 0 ] || echo "nothing to sweep"
+}
+
+main "$@"
