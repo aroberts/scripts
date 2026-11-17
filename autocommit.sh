@@ -47,8 +47,12 @@ if [[ -n $("$git" status --short) ]]; then
     "$git" add -A && \
     debug "Running git commit" && \
     "$git" commit -m "Autocommit `date`" && \
-    debug "Running git push" && \
-    "$git" push
+    if [[ -n $("$git" remote) ]]; then
+      debug "Running git push" && \
+        "$git" push
+    else
+      debug "No remote, skipping push"
+    fi
 else
   debug 'clean'
 fi
